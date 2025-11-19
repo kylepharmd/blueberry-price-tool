@@ -118,3 +118,464 @@
                     <input type="checkbox" id="membership-toggle"
                         class="h-5 w-5 text-blueberry-dark border-gray-300 rounded focus:ring-blueberry-accent"
                         onchange="calculatePrice();">
+                    <label for="membership-toggle" class="text-sm font-medium text-gray-700 select-none">
+                        I am a Blueberry Pharmacy Member (Lower Fee)
+                    </label>
+                </div>
+            </section>
+
+            <!-- Price Display and Action Buttons -->
+            <section class="flex flex-col md:flex-row justify-between items-center bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <div class="flex-1 text-center md:text-left mb-4 md:mb-0">
+                    <p class="text-sm font-semibold text-gray-700">Estimated Cash Price:</p>
+                    <p id="final-price-display" class="text-4xl font-extrabold text-green-600 mt-1">$0.00</p>
+                </div>
+                
+                <div class="flex flex-col space-y-2 w-full md:w-auto">
+                    <!-- Add to Cart Button -->
+                    <button id="add-to-cart-btn" disabled
+                        class="w-full px-6 py-2 rounded-lg bg-blueberry-dark text-white font-semibold hover:bg-blueberry-dark/90 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg">
+                        <i class="fas fa-cart-plus mr-2"></i> Add to Cart
+                    </button>
+                    <!-- Renewal Draft Button (LLM Tool) -->
+                    <button id="generate-renewal-btn" disabled
+                        class="w-full px-6 py-2 rounded-lg bg-blueberry-accent text-white font-semibold hover:bg-blueberry-accent/90 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg text-sm">
+                        <i class="fas fa-envelope mr-2"></i> Renewal Draft ✨
+                    </button>
+                </div>
+            </section>
+
+            <!-- LLM Output and Status Section -->
+            <section id="llm-output-section" class="mt-6 space-y-4">
+                <!-- LLM Info Output -->
+                <div id="llm-info-box" class="hidden p-4 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800">
+                    <p class="font-semibold text-sm mb-2"><i class="fas fa-info-circle mr-2"></i> Drug Information & Uses</p>
+                    <div id="llm-info-content" class="text-sm leading-relaxed"></div>
+                </div>
+
+                <!-- LLM Renewal Output -->
+                <div id="llm-renewal-box" class="hidden p-4 rounded-lg bg-blue-50 border border-blue-200 text-blue-800">
+                    <p class="font-semibold text-sm mb-2"><i class="fas fa-scroll mr-2"></i> Prescription Renewal Draft</p>
+                    <textarea id="llm-renewal-content" rows="6" readonly class="w-full text-sm font-mono p-2 border border-blue-300 rounded-lg bg-white/70"></textarea>
+                    <button onclick="copyToClipboard('llm-renewal-content')" class="mt-2 text-xs font-semibold px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition duration-150">
+                        <i class="fas fa-copy mr-1"></i> Copy Message
+                    </button>
+                </div>
+            </section>
+            
+        </div>
+
+        <!-- Cart Tally Section -->
+        <div class="mt-8 bg-white p-6 md:p-8 rounded-xl shadow-2xl border border-gray-100">
+            <h2 class="text-xl font-bold text-blueberry-dark mb-4 border-b pb-2">Price Cart Tally</h2>
+            <div id="cart-items-container" class="space-y-3 max-h-80 overflow-y-auto custom-scrollbar mb-4">
+                <p id="cart-empty-message" class="text-gray-500 italic text-sm">Your cart is empty.</p>
+            </div>
+            <div class="flex justify-between items-center pt-3 border-t border-gray-200">
+                <span class="text-xl font-bold text-gray-800">Total Estimated Cost:</span>
+                <span id="cart-total-display" class="text-xl font-extrabold text-green-600">$0.00</span>
+            </div>
+            <div class="flex justify-end mt-4">
+                <button onclick="clearCart()" class="text-xs text-red-500 hover:text-red-700 transition duration-150">
+                    Clear Cart
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // --- CONFIGURATION ---
+        // REPLACE THIS WITH YOUR DEPLOYED GOOGLE APPS SCRIPT URL!
+        const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzSpA-kP--grv-MuLZdfSH02_bPwmMDm05PSo-xQb2n4_E9RnwTv3halmGytJWxGddAnw/exec'; 
+        const API_KEY = ""; // Canvas will provide this in runtime
+        const API_MODEL = 'gemini-2.5-flash-preview-09-2025';
+
+        // --- GLOBAL STATE ---
+        let drugData = [];
+        let fuse;
+        let selectedDrug = null;
+        let cart = [];
+
+        const fuseOptions = {
+            keys: ['name', 'ndc'],
+            threshold: 0.3,
+            minMatchCharLength: 2
+        };
+
+        // --- DOM ELEMENTS ---
+        const drugSearchInput = document.getElementById('drug-search-input');
+        const searchResultsList = document.getElementById('search-results-list');
+        const selectedDrugDisplay = document.getElementById('selected-drug-display');
+        const quantityInput = document.getElementById('quantity-input');
+        const dailyDoseInput = document.getElementById('daily-dose-input');
+        const daysSupplyDisplay = document.getElementById('days-supply-display');
+        const membershipToggle = document.getElementById('membership-toggle');
+        const finalPriceDisplay = document.getElementById('final-price-display');
+        const addToCartBtn = document.getElementById('add-to-cart-btn');
+        const cartItemsContainer = document.getElementById('cart-items-container');
+        const cartTotalDisplay = document.getElementById('cart-total-display');
+        const cartEmptyMessage = document.getElementById('cart-empty-message');
+        const getDrugInfoBtn = document.getElementById('get-drug-info-btn');
+        const generateRenewalBtn = document.getElementById('generate-renewal-btn');
+        const llmInfoBox = document.getElementById('llm-info-box');
+        const llmInfoContent = document.getElementById('llm-info-content');
+        const llmRenewalBox = document.getElementById('llm-renewal-box');
+        const llmRenewalContent = document.getElementById('llm-renewal-content');
+        
+        // --- DATA FETCHING & INITIALIZATION ---
+
+        async function fetchWithRetry(url, options = {}, retries = 5, delay = 1000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return await response.json();
+                } catch (error) {
+                    if (i === retries - 1) {
+                        console.error(`Failed to fetch drug data after ${retries} attempts. Error: ${error.message}`);
+                        throw new Error(`Failed to fetch drug data after ${retries} attempts. Error: ${error.message}`);
+                    }
+                    await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i))); // Exponential backoff
+                }
+            }
+        }
+
+        async function fetchDrugData() {
+            try {
+                const data = await fetchWithRetry(APP_SCRIPT_URL, {}, 5);
+                return data;
+            } catch (error) {
+                console.error("Error fetching drug data:", error);
+                throw error;
+            }
+        }
+
+        function setupApp() {
+            // Initialize Fuse.js for search
+            fuse = new Fuse(drugData, fuseOptions);
+
+            // Hide loading indicator (if any) and enable inputs
+            drugSearchInput.disabled = false;
+            drugSearchInput.placeholder = "Start typing drug name or NDC...";
+            
+            // Add initial listeners
+            drugSearchInput.addEventListener('input', handleSearch);
+            document.addEventListener('click', handleGlobalClick);
+            addToCartBtn.addEventListener('click', addItemToCart);
+            getDrugInfoBtn.addEventListener('click', fetchDrugInfo);
+            generateRenewalBtn.addEventListener('click', generateRenewalDraft);
+            
+            // Initial calculations
+            calculatePrice();
+        }
+
+        async function initializeAppLifecycle() {
+            try {
+                // 1. Fetch Price Data
+                drugSearchInput.placeholder = "Loading drug data...";
+                drugSearchInput.disabled = true;
+                drugData = await fetchDrugData();
+
+                // 2. Setup Application after data is loaded and validated
+                if (drugData && drugData.length > 0) {
+                    setupApp();
+                } else {
+                    console.error('Drug data loaded successfully but is empty or invalid.');
+                    drugSearchInput.placeholder = "ERROR: No drug data loaded. Check Apps Script logs.";
+                }
+
+            } catch (error) {
+                console.error("Critical error during application initialization:", error);
+                drugSearchInput.placeholder = "ERROR: Failed to load drug data. Check the Apps Script URL/permissions.";
+            }
+        }
+
+        // --- SEARCH LOGIC ---
+
+        function handleSearch() {
+            const query = drugSearchInput.value.trim();
+
+            if (query.length < 2 || !fuse) {
+                searchResultsList.classList.add('hidden');
+                return;
+            }
+
+            const results = fuse.search(query).slice(0, 10); // Limit to top 10 results
+            renderSearchResults(results);
+        }
+
+        function renderSearchResults(results) {
+            searchResultsList.innerHTML = '';
+
+            if (results.length === 0) {
+                searchResultsList.innerHTML = '<p class="p-3 text-sm text-gray-500">No results found.</p>';
+            } else {
+                results.forEach(result => {
+                    const drug = result.item;
+                    const resultItem = document.createElement('div');
+                    resultItem.className = 'p-3 hover:bg-gray-100 cursor-pointer text-sm border-b last:border-b-0 transition duration-100';
+                    resultItem.innerHTML = `
+                        <span class="font-semibold text-blueberry-dark">${drug.name}</span>
+                        <span class="text-gray-500 text-xs ml-2">NDC: ${drug.ndc}</span>
+                    `;
+                    resultItem.addEventListener('click', () => selectDrug(drug));
+                    searchResultsList.appendChild(resultItem);
+                });
+            }
+
+            searchResultsList.classList.remove('hidden');
+        }
+
+        function handleGlobalClick(event) {
+            if (!searchResultsList.contains(event.target) && event.target !== drugSearchInput) {
+                searchResultsList.classList.add('hidden');
+            }
+        }
+
+        function selectDrug(drug) {
+            selectedDrug = drug;
+            drugSearchInput.value = drug.name; // Display full name in input
+            selectedDrugDisplay.innerHTML = `Selected Drug: <span class="text-blueberry-dark font-semibold italic">${drug.name} (NDC: ${drug.ndc})</span>`;
+            searchResultsList.classList.add('hidden');
+            
+            addToCartBtn.disabled = false;
+            generateRenewalBtn.disabled = false;
+            calculatePrice();
+        }
+
+        // --- PRICING LOGIC ---
+
+        function calculateDaysSupply() {
+            const quantity = parseFloat(quantityInput.value) || 0;
+            const dailyDose = parseFloat(dailyDoseInput.value) || 0;
+
+            if (quantity <= 0 || dailyDose <= 0 || isNaN(quantity) || isNaN(dailyDose)) {
+                daysSupplyDisplay.textContent = 'Days Supply: 0 days (Invalid input)';
+                return 0;
+            }
+
+            const daysSupply = quantity / dailyDose;
+            daysSupplyDisplay.textContent = `Days Supply: ${daysSupply.toFixed(1)} days`;
+            return daysSupply;
+        }
+        
+        function calculatePrice() {
+            if (!selectedDrug) {
+                finalPriceDisplay.textContent = "$0.00";
+                addToCartBtn.disabled = true;
+                generateRenewalBtn.disabled = true;
+                return;
+            }
+
+            const daysSupply = calculateDaysSupply();
+            const AC = selectedDrug.acquisition_cost_ac;
+            const isMember = membershipToggle.checked;
+            
+            // Check for valid days supply calculation before proceeding
+            if (daysSupply <= 0 || isNaN(AC)) {
+                finalPriceDisplay.textContent = "$0.00 (Check Qty/Dose)";
+                return;
+            }
+
+            let professionalFee = 0;
+
+            if (daysSupply <= 30) {
+                professionalFee = isMember ? 4.02 : 11.02;
+            } else { // daysSupply > 30
+                professionalFee = isMember ? 6.02 : 16.02;
+            }
+
+            const basePrice = AC * parseFloat(quantityInput.value) * 1.06;
+            const finalPrice = basePrice + professionalFee;
+
+            finalPriceDisplay.textContent = `$${finalPrice.toFixed(2)}`;
+            addToCartBtn.disabled = false;
+            generateRenewalBtn.disabled = false;
+        }
+
+        // --- CART LOGIC ---
+
+        function addItemToCart() {
+            if (!selectedDrug || addToCartBtn.disabled) return;
+
+            const quantity = parseFloat(quantityInput.value) || 0;
+            const dailyDose = parseFloat(dailyDoseInput.value) || 0;
+            const daysSupply = calculateDaysSupply();
+            const priceText = finalPriceDisplay.textContent;
+            const price = parseFloat(priceText.replace('$', ''));
+            const isMember = membershipToggle.checked;
+
+            const cartItem = {
+                id: Date.now(), // Unique ID
+                name: selectedDrug.name,
+                ndc: selectedDrug.ndc,
+                quantity: quantity,
+                dailyDose: dailyDose,
+                daysSupply: daysSupply,
+                isMember: isMember,
+                price: price
+            };
+
+            cart.push(cartItem);
+            renderCart();
+        }
+
+        function renderCart() {
+            cartItemsContainer.innerHTML = '';
+
+            if (cart.length === 0) {
+                cartEmptyMessage.classList.remove('hidden');
+                cartTotalDisplay.textContent = '$0.00';
+                return;
+            }
+            cartEmptyMessage.classList.add('hidden');
+
+            let total = 0;
+
+            cart.forEach(item => {
+                total += item.price;
+
+                const status = item.isMember ? 'Member' : 'Non-Member';
+                const memberColor = item.isMember ? 'text-blue-500' : 'text-gray-500';
+
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'flex justify-between items-start p-3 bg-gray-50 rounded-lg border border-gray-200';
+                itemDiv.innerHTML = `
+                    <div class="flex-1 min-w-0">
+                        <p class="font-semibold text-gray-800 truncate">${item.name}</p>
+                        <p class="text-xs text-gray-500">NDC: ${item.ndc}</p>
+                        <p class="text-xs ${memberColor}">${status} | Qty: ${item.quantity} (${item.daysSupply.toFixed(0)} days)</p>
+                    </div>
+                    <div class="flex items-center space-x-2 ml-4">
+                        <span class="font-bold text-lg text-green-600">$${item.price.toFixed(2)}</span>
+                        <button onclick="removeItemFromCart(${item.id})" title="Remove" class="text-gray-400 hover:text-red-500 transition duration-150">
+                            <i class="fas fa-times-circle"></i>
+                        </button>
+                    </div>
+                `;
+                cartItemsContainer.appendChild(itemDiv);
+            });
+
+            cartTotalDisplay.textContent = `$${total.toFixed(2)}`;
+        }
+
+        function removeItemFromCart(id) {
+            cart = cart.filter(item => item.id !== id);
+            renderCart();
+        }
+
+        function clearCart() {
+            cart = [];
+            renderCart();
+        }
+
+
+        // --- GEMINI LLM TOOLS LOGIC ---
+
+        function showLoading(element, message) {
+            element.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i> ${message}`;
+        }
+        
+        function hideLLMBoxes() {
+            llmInfoBox.classList.add('hidden');
+            llmRenewalBox.classList.add('hidden');
+        }
+
+        function copyToClipboard(elementId) {
+            const textarea = document.getElementById(elementId);
+            textarea.select();
+            document.execCommand('copy');
+            // Using a non-blocking console log instead of alert
+            console.log('Message copied to clipboard!'); 
+        }
+
+        // Tool 1: Drug Info & Uses
+        async function fetchDrugInfo() {
+            if (!selectedDrug) return;
+            
+            hideLLMBoxes();
+            llmInfoBox.classList.remove('hidden');
+            showLoading(llmInfoContent, `Retrieving information for ${selectedDrug.name}...`);
+
+            const userQuery = `Find and summarize the common indications and typical uses for the drug ${selectedDrug.name} (${selectedDrug.ndc}). Provide a concise, single-paragraph summary suitable for a patient.`;
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: { parts: [{ text: "You are a friendly, patient-facing pharmacist helper. Provide a concise, single-paragraph summary of drug uses. Do not mention warnings or side effects." }] },
+            };
+
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${API_MODEL}:generateContent?key=${API_KEY}`;
+                const response = await fetchWithRetry(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }, 3);
+
+                const candidate = response?.candidates?.[0];
+                const text = candidate?.content?.parts?.[0]?.text;
+
+                if (text) {
+                    llmInfoContent.innerHTML = text.replace(/\n/g, '<br>'); // Preserve line breaks
+                } else {
+                    llmInfoContent.innerHTML = 'Could not retrieve drug information. Please try again.';
+                }
+
+            } catch (error) {
+                console.error("Gemini Drug Info Error:", error);
+                llmInfoContent.innerHTML = 'Error: Could not retrieve drug information. Please try again.';
+            }
+        }
+
+        // Tool 2: Prescription Renewal Draft
+        async function generateRenewalDraft() {
+            if (!selectedDrug) return;
+            
+            hideLLMBoxes();
+            llmRenewalBox.classList.remove('hidden');
+            llmRenewalContent.value = `Generating renewal message for ${selectedDrug.name}...`;
+
+            const quantity = parseFloat(quantityInput.value) || 0;
+            const daysSupply = calculateDaysSupply();
+
+            const userQuery = `Draft a concise, professional email for a patient to send to their doctor requesting a refill/renewal for the prescription: ${selectedDrug.name} (NDC: ${selectedDrug.ndc}). The patient currently uses ${selectedDrug.name} at a dose of ${dailyDoseInput.value} unit(s) per day, and needs a refill of quantity ${quantity} (a ${daysSupply.toFixed(0)}-day supply). Include all necessary details for the doctor's office.`;
+            
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: "You are a professional medical assistant drafting an email for a patient to send to their doctor. Keep the tone professional, concise, and ensure all necessary drug name, dose, quantity, and refill request details are clearly included." }] },
+            };
+
+            try {
+                const url = `https://generativelang
+uage.googleapis.com/v1beta/models/${API_MODEL}:generateContent?key=${API_KEY}`;
+                const response = await fetchWithRetry(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }, 3);
+
+                const candidate = response?.candidates?.[0];
+                const text = candidate?.content?.parts?.[0]?.text;
+
+                if (text) {
+                    llmRenewalContent.value = text.trim();
+                } else {
+                    llmRenewalContent.value = 'Could not generate renewal message. Please try again.';
+                }
+
+            } catch (error) {
+                console.error("Gemini Renewal Draft Error:", error);
+                llmRenewalContent.value = 'Error generating renewal message. Please check connection and try again.';
+            }
+        }
+
+        // --- LIFECYCLE HOOKS ---
+        window.onload = initializeAppLifecycle;
+        
+    </script>
+</body>
+</html>
